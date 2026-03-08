@@ -1042,6 +1042,135 @@
 
   fetchCalendar();
   setInterval(fetchCalendar, 5 * 60 * 1000); // refresh every 5 minutes
+
+  /* ── Leaderboard — live from Airtable ── */
+  const AT_TOKEN = 'patqFRxFfWFIyZca9.de4457c072e0b5003ff5c8d6fc69ee1f2dbf5e8dfb8a5452e7ed3feca2ccc5fb';
+  const AT_BASE  = 'appkSRBahE13BDLzQ';
+  const AT_TABLE = 'tblcssIG6Y4IMpHRR';
+
+  const MEMBER_META = {
+    'Ella':    { color: 'var(--ella)',    initial: 'E', photo: 'photos/ella.jpg',    streakIcon: '🔥' },
+    'Lindsey': { color: 'var(--lindsey)', initial: 'L', photo: 'photos/lindsey.jpg', streakIcon: '⚡' },
+    'James':   { color: 'var(--james)',   initial: 'J', photo: 'photos/james.jpg',   streakIcon: '📅' },
+  };
+
+  function getWeekStart() {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(now.getDate() - now.getDay());
+    start.setHours(0, 0, 0, 0);
+    return start.toISOString();
+  }
+
+  function getTodayStart() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
+  async function fetchLeaderboard() {
+    try {
+      const weekStart  = getWeekStart();
+      const todayStart = getTodayStart();
+
+      const url = `https://api.airtable.com/v0/${AT_BASE}/${AT_TABLE}`
+        + `?filterByFormula=IS_AFTER({Logged At}, '${weekStart}')`
+        + `&fields[]=Person&fields[]=Points&fields[]=Logged%20At`
+        + `&pageSize=100`;
+
+      const res  = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${AT_TOKEN}` }
+      });
+      const data = await res.json();
+
+      if (!data.records) { console.error('Airtable error:', data); return; }
+
+      // Aggregate per person
+      const totals = {};
+      Object.keys(MEMBER_META).forEach(name => {
+        totals[name] = { score: 0, tasks: 0, ptsToday: 0 };
+      });
+
+      data.records.forEach(r => {
+        const name   = r.fields['Person'];
+        const pts    = r.fields['Points'] || 0;
+        const logged = r.fields['Logged At'];
+        if (!totals[name]) return;
+        totals[name].score += pts;
+        totals[name].tasks += 1;
+        if (logged && logged >= todayStart) totals[name].ptsToday += pts;
+      });
+
+      const members = Object.entries(totals).map(([name, t]) => ({
+        name, ...MEMBER_META[name],
+        score: Math.round(t.score),
+        tasks: t.tasks,
+        ptsToday: Math.round(t.ptsToday),
+      }));
+
+      renderLeaderboard(members);
+
+    } catch(e) {
+      console.error('Leaderboard fetch failed:', e);
+    }
+  }
+
+  function renderLeaderboard(members) {
+    const sorted = [...members].sort((a, b) => b.score - a.score);
+    const top    = Math.max(sorted[0].score, 1);
+    const container = document.getElementById('lb-rows');
+    const rankClasses = ['r1','r2','r3'];
+
+    container.innerHTML = sorted.map((m, i) => {
+      const barPct = Math.round((m.score / top) * 100);
+      const gap = i === 0
+        ? `Leading by <b>${m.score - sorted[1].score}</b> pts`
+        : `<b>${sorted[0].score - m.score}</b> pts back`;
+      const crown = i === 0 ? `<div class="lb-crown">👑</div>` : '';
+
+      return `
+        <div class="lb-member ${rankClasses[i]}">
+          <div class="lb-top">
+            <div class="lb-rank-n ${i === 0 ? 'gold' : ''}">${i + 1}</div>
+            <div class="lb-crown-wrap">
+              ${crown}
+              <div class="lb-avatar" style="background:${m.color}">
+                <img src="${m.photo}" alt="${m.name}"
+                     onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                <div class="lb-avatar-fb" style="background:${m.color};display:none">${m.initial}</div>
+              </div>
+            </div>
+            <div class="lb-name-col">
+              <div class="lb-name">${m.name}</div>
+              <div class="lb-streak">${m.streakIcon} this week</div>
+            </div>
+            <div class="lb-score-col">
+              <div class="lb-score">${m.score}</div>
+              <div class="lb-score-lbl">pts</div>
+            </div>
+          </div>
+          <div class="lb-bar-wrap">
+            <div class="lb-bar-fill" style="width:${barPct}%;background:${m.color}"></div>
+          </div>
+          <div class="lb-stats">
+            <div class="lb-stat"><b>${m.tasks}</b> tasks</div>
+            <div class="lb-stat"><b>+${m.ptsToday}</b> today</div>
+            <div class="lb-stat">${gap}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Update footer week range
+    const now = new Date();
+    const sun = new Date(now); sun.setDate(now.getDate() - now.getDay());
+    const sat = new Date(sun); sat.setDate(sun.getDate() + 6);
+    const fmt = d => `${FULL_MONTHS[d.getMonth()].slice(0,3)} ${d.getDate()}`;
+    document.querySelector('.lb-footer-lbl').textContent =
+      `Week of ${fmt(sun)} – ${fmt(sat)}`;
+  }
+
+  fetchLeaderboard();
+  setInterval(fetchLeaderboard, 2 * 60 * 1000); // refresh every 2 minutes
 </script>
 </body>
 </html>
