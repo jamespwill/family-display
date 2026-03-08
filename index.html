@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <title>Family Kitchen Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,600;1,300&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,600;1,300&family=Nunito:wght@400;600;700;800;900&family=Noto+Emoji&display=swap" rel="stylesheet">
 <style>
+  .emoji {
+    font-family: 'Noto Emoji', sans-serif;
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
@@ -33,7 +36,7 @@
   html, body {
     width: 100vw; height: 100vh;
     overflow: hidden;
-    font-family: 'Nunito', sans-serif;
+    font-family: 'Nunito', 'Noto Emoji', sans-serif;
     background: var(--cream);
     color: var(--ink);
   }
@@ -538,7 +541,7 @@
     </div>
     <div class="photo-fade-top"></div>
     <div class="photo-fade-btm"></div>
-    <div class="photo-badge">📷 Family Photo Library</div>
+    <div class="photo-badge"><span class="emoji">📷</span> Family Photo Library</div>
     <div class="photo-caption">
       <div>
         <div class="photo-title">Riverside Walk — Fall 2024 🍂</div>
@@ -658,7 +661,7 @@
 
         <div class="lb-footer">
           <div class="lb-footer-lbl">Week of July 7 – July 13</div>
-          <div class="lb-week-badge">🏆 Resets Sunday</div>
+          <div class="lb-week-badge"><span class="emoji">🏆</span> Resets Sunday</div>
         </div>
       </div>
     </div>
@@ -1124,7 +1127,7 @@
       const gap = i === 0
         ? `Leading by <b>${m.score - sorted[1].score}</b> pts`
         : `<b>${sorted[0].score - m.score}</b> pts back`;
-      const crown = i === 0 ? `<div class="lb-crown">👑</div>` : '';
+      const crown = i === 0 ? `<div class="lb-crown"><span class="emoji">👑</span></div>` : '';
 
       return `
         <div class="lb-member ${rankClasses[i]}">
@@ -1140,7 +1143,7 @@
             </div>
             <div class="lb-name-col">
               <div class="lb-name">${m.name}</div>
-              <div class="lb-streak">${m.streakIcon} this week</div>
+              <div class="lb-streak"><span class="emoji">${m.streakIcon}</span> this week</div>
             </div>
             <div class="lb-score-col">
               <div class="lb-score">${m.score}</div>
