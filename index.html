@@ -924,6 +924,12 @@
     }
   }
 
+  // Force re-auth once to get clean token (remove this after re-auth completes)
+  if (!localStorage.getItem('cal_reauth_v2')) {
+    localStorage.clear();
+    localStorage.setItem('cal_reauth_v2', '1');
+  }
+
   // Render grid immediately with no dots, dots added after calendar fetch
   renderCalendarGrid({});
 
