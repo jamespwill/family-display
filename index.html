@@ -618,44 +618,13 @@
       <div class="calendar-card">
         <div class="cal-header">
           <div class="eyebrow" style="margin:0">Family Calendar</div>
-          <div class="cal-month">July 2025</div>
+          <div class="cal-month" id="cal-month-label">Loading...</div>
         </div>
 
-        <div class="cal-grid">
+        <div class="cal-grid" id="cal-grid">
           <div class="cal-dname">S</div><div class="cal-dname">M</div><div class="cal-dname">T</div>
           <div class="cal-dname">W</div><div class="cal-dname">T</div><div class="cal-dname">F</div><div class="cal-dname">S</div>
-
-          <div class="cal-d faded">29</div><div class="cal-d faded">30</div>
-          <div class="cal-d">1</div>
-          <div class="cal-d">2<span class="dot" style="background:var(--ella)"></span></div>
-          <div class="cal-d">3<span class="dot" style="background:var(--lindsey)"></span></div>
-          <div class="cal-d">4</div><div class="cal-d">5</div>
-
-          <div class="cal-d">6</div>
-          <div class="cal-d">7<span class="dot" style="background:var(--james)"></span></div>
-          <div class="cal-d">8<span class="dot" style="background:var(--ella)"></span></div>
-          <div class="cal-d">9</div><div class="cal-d">10</div>
-          <div class="cal-d">11<span class="dot" style="background:var(--lindsey)"></span></div>
-          <div class="cal-d">12</div>
-
-          <div class="cal-d today">13</div>
-          <div class="cal-d">14<span class="dot" style="background:var(--ella)"></span></div>
-          <div class="cal-d">15</div>
-          <div class="cal-d">16<span class="dot" style="background:var(--james)"></span></div>
-          <div class="cal-d">17</div>
-          <div class="cal-d">18<span class="dot" style="background:var(--ella)"></span></div>
-          <div class="cal-d">19</div>
-
-          <div class="cal-d">20</div><div class="cal-d">21</div>
-          <div class="cal-d">22<span class="dot" style="background:var(--lindsey)"></span></div>
-          <div class="cal-d">23</div>
-          <div class="cal-d">24<span class="dot" style="background:var(--james)"></span></div>
-          <div class="cal-d">25</div><div class="cal-d">26</div>
-
-          <div class="cal-d">27</div>
-          <div class="cal-d">28<span class="dot" style="background:var(--ella)"></span></div>
-          <div class="cal-d">29</div><div class="cal-d">30</div><div class="cal-d">31</div>
-          <div class="cal-d faded">1</div><div class="cal-d faded">2</div>
+          <!-- days filled by renderCalendarGrid() -->
         </div>
 
         <div class="events-header" id="events-header">Today &amp; Upcoming</div>
@@ -890,6 +859,66 @@
 
   renderLeaderboard();
 
+  /* ── Dynamic Calendar Grid ── */
+  const FULL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  function renderCalendarGrid(eventDates) {
+    const now       = new Date();
+    const year      = now.getFullYear();
+    const month     = now.getMonth();
+    const today     = now.getDate();
+    const firstDay  = new Date(year, month, 1).getDay(); // 0=Sun
+    const daysInMonth    = new Date(year, month + 1, 0).getDate();
+    const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+    document.getElementById('cal-month-label').textContent =
+      `${FULL_MONTHS[month]} ${year}`;
+
+    // Keep the day-name headers, replace day cells
+    const grid = document.getElementById('cal-grid');
+    // Remove old day cells (keep the 7 dname headers)
+    const headers = Array.from(grid.querySelectorAll('.cal-dname'));
+    grid.innerHTML = '';
+    headers.forEach(h => grid.appendChild(h));
+
+    // Prev month faded days
+    for (let i = 0; i < firstDay; i++) {
+      const d = document.createElement('div');
+      d.className = 'cal-d faded';
+      d.textContent = daysInPrevMonth - firstDay + 1 + i;
+      grid.appendChild(d);
+    }
+
+    // This month's days
+    for (let d = 1; d <= daysInMonth; d++) {
+      const el = document.createElement('div');
+      el.className = 'cal-d' + (d === today ? ' today' : '');
+      el.textContent = d;
+      // Add dot if there's an event on this day
+      const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      if (eventDates && eventDates[dateStr]) {
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = eventDates[dateStr];
+        el.appendChild(dot);
+      }
+      grid.appendChild(el);
+    }
+
+    // Next month faded days to complete grid
+    const totalCells = firstDay + daysInMonth;
+    const remaining  = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+    for (let i = 1; i <= remaining; i++) {
+      const d = document.createElement('div');
+      d.className = 'cal-d faded';
+      d.textContent = i;
+      grid.appendChild(d);
+    }
+  }
+
+  // Render grid immediately with no dots, dots added after calendar fetch
+  renderCalendarGrid({});
+
   /* ── Google Calendar ── */
   const CAL_ID  = 'jamespwill@gmail.com';
   const CAL_KEY = 'AIzaSyBoK6W_ix_BMmVgz8ILTj6HbAbKERem8YM';
@@ -929,12 +958,36 @@
         + `&timeMax=${twoWeeks}`
         + `&singleEvents=true`
         + `&orderBy=startTime`
-        + `&maxResults=20`;
+        + `&maxResults=50`;
 
-      const res    = await fetch(url);
-      const data   = await res.json();
+      const res  = await fetch(url);
+      const data = await res.json();
 
-      if (!data.items || data.items.length === 0) {
+      // Filter out events with no real title, reminders, and system events
+      const events = (data.items || []).filter(e =>
+        e.summary &&
+        e.summary.trim() !== '' &&
+        !e.summary.startsWith('Reminder:') &&
+        e.status !== 'cancelled'
+      );
+
+      // Build dot map for calendar grid — first event color per day
+      const dotColors = ['var(--ella)','var(--lindsey)','var(--james)','var(--accent-gold)'];
+      const eventDates = {};
+      events.forEach((event, i) => {
+        const start   = event.start;
+        const dateStr = start.date
+          ? start.date
+          : new Date(start.dateTime).toISOString().split('T')[0];
+        if (!eventDates[dateStr]) {
+          eventDates[dateStr] = dotColors[i % dotColors.length];
+        }
+      });
+
+      // Re-render grid with real event dots
+      renderCalendarGrid(eventDates);
+
+      if (events.length === 0) {
         document.getElementById('event-list').innerHTML = `
           <div class="event-item">
             <div class="event-bar" style="background:var(--ink-muted)"></div>
@@ -948,27 +1001,26 @@
       }
 
       const today = new Date().toDateString();
-
-      // Update header
       document.getElementById('events-header').textContent = 'Today & Upcoming';
 
-      document.getElementById('event-list').innerHTML = data.items.map((event, i) => {
-        const start     = event.start;
-        const isToday   = (start.date
+      document.getElementById('event-list').innerHTML = events.map((event, i) => {
+        const start   = event.start;
+        const eventDate = start.date
           ? new Date(start.date + 'T00:00:00')
-          : new Date(start.dateTime)).toDateString() === today;
+          : new Date(start.dateTime);
+        const isToday   = eventDate.toDateString() === today;
         const timeStr   = formatEventTime(start);
         const dayStr    = formatEventDay(start);
-        const color     = CAL_COLORS[i % CAL_COLORS.length];
+        const color     = dotColors[i % dotColors.length];
         const location  = event.location ? event.location.split(',')[0] : '';
-        const sub       = location || (event.description ? event.description.substring(0, 40) : '');
+        const sub       = location || '';
 
         return `
           <div class="event-item ${isToday ? '' : 'upcoming'}">
             <div class="event-bar" style="background:${color}"></div>
             <div class="event-time" style="line-height:1.3">${isToday ? timeStr : dayStr}</div>
             <div class="event-body">
-              <div class="event-name">${event.summary || 'Untitled'}</div>
+              <div class="event-name">${event.summary}</div>
               ${sub ? `<div class="event-sub">${sub}</div>` : ''}
             </div>
           </div>`;
