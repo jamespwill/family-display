@@ -545,8 +545,8 @@
     <div class="photo-badge"><span class="emoji">📷</span> Family Photo Library</div>
     <div class="photo-caption">
       <div>
-        <div class="photo-title" id="photo-caption">Family Photos</div>
-        <div class="photo-meta"><span id="photo-count">Loading...</span></div>
+        <div class="photo-title">Family Photos</div>
+        <div class="photo-meta">Slideshow · Auto-advances every 30 seconds</div>
       </div>
     </div>
     <div class="photo-timer"></div>
@@ -924,21 +924,14 @@
     }
   }
 
-  // Clear old token if it doesn't include photos scope (force re-auth)
-  if (localStorage.getItem('cal_refresh_token') && !localStorage.getItem('cal_has_photos_scope')) {
-    localStorage.clear();
-    localStorage.setItem('cal_has_photos_scope', '1');
-  }
-
   // Render grid immediately with no dots, dots added after calendar fetch
   renderCalendarGrid({});
 
   /* ── Google Calendar OAuth (Device Flow) ── */
   const CAL_ID        = 'jamespwill@gmail.com';
-  const OAUTH_CLIENT  = '339236203935-ngpevr8mmhsov3c6pmn7s4556qiaujef.apps.googleusercontent.com';
-  const OAUTH_SECRET  = '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';
-  const CAL_SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photoslibrary.readonly';
-  const PHOTOS_ALBUM  = 'AF1QipPFXpHvdo_pcwq3ErqoCXbP6aLxzJ4o2P8ZZuwK';
+  const OAUTH_CLIENT  = '339236203935-39032ib9s750ugr5utnlrraiaaqcgnk4.apps.googleusercontent.com';
+  const OAUTH_SECRET  = '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';
+  const CAL_SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly';
   const CAL_COLORS    = ['var(--ella)','var(--lindsey)','var(--james)','var(--accent-gold)'];
 
   const SHORT_DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -1053,7 +1046,6 @@
           calTokenExpiry = Date.now() + pollData.expires_in * 1000;
           hideAuthOverlay();
           fetchCalendar();
-          fetchPhotos();
         }
       }, interval);
     } catch(e) {
@@ -1137,97 +1129,6 @@
   fetchCalendar();
   setInterval(fetchCalendar, 5 * 60 * 1000);
 
-  /* ── Google Photos Slideshow ── */
-  let photosList      = [];
-  let photoIndex      = 0;
-  let photoSlideTimer = null;
-
-  async function fetchPhotos() {
-    try {
-      const hasToken = await ensureAccessToken();
-      if (!hasToken) return;
-
-      const res  = await fetch(`https://photoslibrary.googleapis.com/v1/mediaItems:search`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${calAccessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          albumId:  PHOTOS_ALBUM,
-          pageSize: 50
-        })
-      });
-      const data = await res.json();
-
-      if (!data.mediaItems || data.mediaItems.length === 0) {
-        console.log('No photos found in album');
-        return;
-      }
-
-      // Shuffle photos
-      photosList = data.mediaItems
-        .filter(p => p.mediaMetadata?.photo) // photos only, no videos
-        .sort(() => Math.random() - 0.5);
-
-      // Update photo count in status bar
-      document.querySelector('.status-bar div:last-child').textContent =
-        `📸 ${photosList.length} photos · Slideshow every 30s`;
-
-      // Start slideshow
-      showPhoto(0);
-      if (photoSlideTimer) clearInterval(photoSlideTimer);
-      photoSlideTimer = setInterval(() => {
-        photoIndex = (photoIndex + 1) % photosList.length;
-        showPhoto(photoIndex);
-      }, 30000);
-
-    } catch(e) {
-      console.error('Photos fetch failed:', e);
-    }
-  }
-
-  function showPhoto(index) {
-    const photo   = photosList[index];
-    const banner  = document.querySelector('.photo-banner');
-    const caption = document.getElementById('photo-caption');
-    const count   = document.getElementById('photo-count');
-
-    if (!photo) return;
-
-    // Use =w1920-h600-c for a cropped landscape version
-    const imgUrl = `${photo.baseUrl}=w1920-h600-c`;
-
-    // Fade transition
-    banner.style.transition = 'opacity 0.8s ease';
-    banner.style.opacity = '0';
-    setTimeout(() => {
-      banner.style.backgroundImage = `url('${imgUrl}')`;
-      banner.style.backgroundSize  = 'cover';
-      banner.style.backgroundPosition = 'center';
-      // Hide the SVG placeholder once we have real photos
-      const svg = banner.querySelector('svg');
-      if (svg) svg.style.display = 'none';
-      banner.style.opacity = '1';
-    }, 400);
-
-    // Update caption
-    const d = new Date(photo.mediaMetadata.creationTime);
-    const dateStr = d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
-    if (caption) caption.textContent = `${dateStr}`;
-    if (count) count.textContent = `${index + 1} / ${photosList.length}`;
-
-    // Reset progress bar animation
-    const bar = document.querySelector('.photo-progress-bar');
-    if (bar) {
-      bar.style.animation = 'none';
-      bar.offsetHeight; // reflow
-      bar.style.animation = 'photo-timer 30s linear forwards';
-    }
-  }
-
-  fetchPhotos();
-  setInterval(fetchPhotos, 60 * 60 * 1000); // re-fetch album every hour
 
   /* ── Leaderboard — live from Airtable ── */
   const AT_TOKEN = 'patqFRxFfWFIyZca9.de4457c072e0b5003ff5c8d6fc69ee1f2dbf5e8dfb8a5452e7ed3feca2ccc5fb';
