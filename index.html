@@ -257,6 +257,7 @@
     border-radius:var(--r-xl); padding:20px 22px;
     box-shadow:var(--shadow-md); border:1px solid var(--border);
     display:flex; flex-direction:column; min-height:0;
+    position:relative; overflow:hidden;
   }
   .cal-header {
     display:flex; align-items:baseline;
@@ -619,6 +620,17 @@
     <!-- ── CENTER: Calendar ── -->
     <div class="col-center">
       <div class="calendar-card">
+
+        <!-- OAuth auth overlay — shown on first load -->
+        <div id="cal-auth-overlay" style="display:none;position:absolute;inset:0;z-index:100;background:rgba(26,26,46,0.96);border-radius:var(--r-xl);flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;text-align:center;">
+          <div style="font-size:32px"><span class="emoji">📅</span></div>
+          <div style="font-family:'Fraunces',serif;font-size:22px;color:#fff;font-weight:600">Connect Google Calendar</div>
+          <div style="color:var(--ink-muted);font-size:13px">On your phone or computer, go to:</div>
+          <div style="font-family:'Nunito',sans-serif;font-size:16px;color:var(--accent-gold);font-weight:800" id="cal-auth-url">google.com/device</div>
+          <div style="color:var(--ink-muted);font-size:13px;margin-top:4px">Enter this code:</div>
+          <div style="font-family:'Fraunces',serif;font-size:42px;color:#fff;letter-spacing:8px;font-weight:600" id="cal-auth-code">------</div>
+          <div style="color:var(--ink-muted);font-size:12px" id="cal-auth-countdown">Code expires in 5:00</div>
+        </div>
         <div class="cal-header">
           <div class="eyebrow" style="margin:0">Family Calendar</div>
           <div class="cal-month" id="cal-month-label">Loading...</div>
@@ -920,18 +932,21 @@
   // Render grid immediately with no dots, dots added after calendar fetch
   renderCalendarGrid({});
 
-  /* ── Google Calendar ── */
-  const CAL_ID  = 'jamespwill@gmail.com';
-  const CAL_KEY = 'AIzaSyBoK6W_ix_BMmVgz8ILTj6HbAbKERem8YM';
-  const CAL_COLORS = [
-    'var(--ella)', 'var(--lindsey)', 'var(--james)',
-    'var(--accent-gold)', 'var(--accent-success)'
-  ];
+  /* ── Google Calendar OAuth (Device Flow) ── */
+  const CAL_ID        = 'jamespwill@gmail.com';
+  const OAUTH_CLIENT  = '339236203935-39032ib9s750ugr5utnlrraiaaqcgnk4.apps.googleusercontent.com';
+  const OAUTH_SECRET  = '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';
+  const CAL_SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly';
+  const CAL_COLORS    = ['var(--ella)','var(--lindsey)','var(--james)','var(--accent-gold)'];
 
   const SHORT_DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  function formatEventTime(start, end, isToday) {
+  let calAccessToken  = null;
+  let calTokenExpiry  = 0;
+  let devicePollTimer = null;
+
+  function formatEventTime(start) {
     if (start.date) return 'All Day';
     const d = new Date(start.dateTime);
     let h = d.getHours(), m = d.getMinutes();
@@ -942,50 +957,144 @@
 
   function formatEventDay(start) {
     const d = start.date ? new Date(start.date + 'T00:00:00') : new Date(start.dateTime);
-    const today = new Date();
+    const today    = new Date();
     const tomorrow = new Date(); tomorrow.setDate(today.getDate() + 1);
     if (d.toDateString() === today.toDateString())    return 'Today';
     if (d.toDateString() === tomorrow.toDateString()) return 'Tomorrow';
     return `${SHORT_DAYS[d.getDay()]}<br>${SHORT_MONTHS[d.getMonth()]} ${d.getDate()}`;
   }
 
+  function showAuthOverlay(userCode, verifyUrl, expiresIn) {
+    const overlay = document.getElementById('cal-auth-overlay');
+    document.getElementById('cal-auth-code').textContent = userCode;
+    document.getElementById('cal-auth-url').textContent  = verifyUrl;
+    overlay.style.display = 'flex';
+    let remaining = expiresIn;
+    const countdown = document.getElementById('cal-auth-countdown');
+    const timer = setInterval(() => {
+      remaining--;
+      const m = Math.floor(remaining / 60);
+      const s = remaining % 60;
+      countdown.textContent = `Code expires in ${m}:${String(s).padStart(2,'0')}`;
+      if (remaining <= 0) clearInterval(timer);
+    }, 1000);
+  }
+
+  function hideAuthOverlay() {
+    document.getElementById('cal-auth-overlay').style.display = 'none';
+  }
+
+  function saveTokens(accessToken, refreshToken, expiresIn) {
+    localStorage.setItem('cal_access_token',  accessToken);
+    localStorage.setItem('cal_refresh_token', refreshToken);
+    localStorage.setItem('cal_token_expiry',  Date.now() + expiresIn * 1000);
+  }
+
+  function loadTokens() {
+    calAccessToken = localStorage.getItem('cal_access_token');
+    calTokenExpiry = parseInt(localStorage.getItem('cal_token_expiry') || '0');
+    return localStorage.getItem('cal_refresh_token');
+  }
+
+  async function refreshAccessToken(refreshToken) {
+    const res  = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id:     OAUTH_CLIENT,
+        client_secret: OAUTH_SECRET,
+        refresh_token: refreshToken,
+        grant_type:    'refresh_token'
+      })
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      calAccessToken = data.access_token;
+      calTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
+      localStorage.setItem('cal_access_token', calAccessToken);
+      localStorage.setItem('cal_token_expiry', calTokenExpiry);
+      return true;
+    }
+    return false;
+  }
+
+  async function startDeviceFlow() {
+    try {
+      const res  = await fetch('https://oauth2.googleapis.com/device/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: OAUTH_CLIENT,
+          scope:     CAL_SCOPE
+        })
+      });
+      const data = await res.json();
+      if (!data.device_code) { console.error('Device flow failed:', data); return; }
+      showAuthOverlay(data.user_code, data.verification_url, data.expires_in);
+      const interval = (data.interval || 5) * 1000;
+      devicePollTimer = setInterval(async () => {
+        const pollRes  = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id:     OAUTH_CLIENT,
+            client_secret: OAUTH_SECRET,
+            device_code:   data.device_code,
+            grant_type:    'urn:ietf:params:oauth:grant-type:device_code'
+          })
+        });
+        const pollData = await pollRes.json();
+        if (pollData.access_token) {
+          clearInterval(devicePollTimer);
+          saveTokens(pollData.access_token, pollData.refresh_token, pollData.expires_in);
+          calAccessToken = pollData.access_token;
+          calTokenExpiry = Date.now() + pollData.expires_in * 1000;
+          hideAuthOverlay();
+          fetchCalendar();
+        }
+      }, interval);
+    } catch(e) {
+      console.error('Device flow error:', e);
+    }
+  }
+
+  async function ensureAccessToken() {
+    const refreshToken = loadTokens();
+    if (!refreshToken) return false;
+    if (!calAccessToken || Date.now() > calTokenExpiry - 300000) {
+      return await refreshAccessToken(refreshToken);
+    }
+    return true;
+  }
+
   async function fetchCalendar() {
     try {
+      const hasToken = await ensureAccessToken();
+      if (!hasToken) { startDeviceFlow(); return; }
+
       const now      = new Date().toISOString();
       const twoWeeks = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
       const url      = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CAL_ID)}/events`
-        + `?key=${CAL_KEY}`
-        + `&timeMin=${now}`
-        + `&timeMax=${twoWeeks}`
-        + `&singleEvents=true`
-        + `&orderBy=startTime`
-        + `&maxResults=50`;
+        + `?timeMin=${now}&timeMax=${twoWeeks}&singleEvents=true&orderBy=startTime&maxResults=50`;
 
-      const res  = await fetch(url);
+      const res  = await fetch(url, { headers: { 'Authorization': `Bearer ${calAccessToken}` } });
       const data = await res.json();
 
-      // Filter out events with no real title, reminders, and system events
+      if (data.error?.status === 'UNAUTHENTICATED') {
+        localStorage.clear(); startDeviceFlow(); return;
+      }
+
       const events = (data.items || []).filter(e =>
-        e.summary &&
-        e.summary.trim() !== '' &&
-        !e.summary.startsWith('Reminder:') &&
-        e.status !== 'cancelled'
+        e.summary && e.summary.trim() !== '' &&
+        !e.summary.startsWith('Reminder:') && e.status !== 'cancelled'
       );
 
-      // Build dot map for calendar grid — first event color per day
-      const dotColors = ['var(--ella)','var(--lindsey)','var(--james)','var(--accent-gold)'];
       const eventDates = {};
       events.forEach((event, i) => {
         const start   = event.start;
-        const dateStr = start.date
-          ? start.date
-          : new Date(start.dateTime).toISOString().split('T')[0];
-        if (!eventDates[dateStr]) {
-          eventDates[dateStr] = dotColors[i % dotColors.length];
-        }
+        const dateStr = start.date ? start.date : new Date(start.dateTime).toISOString().split('T')[0];
+        if (!eventDates[dateStr]) eventDates[dateStr] = CAL_COLORS[i % CAL_COLORS.length];
       });
-
-      // Re-render grid with real event dots
       renderCalendarGrid(eventDates);
 
       if (events.length === 0) {
@@ -993,51 +1102,32 @@
           <div class="event-item">
             <div class="event-bar" style="background:var(--ink-muted)"></div>
             <div class="event-time">--</div>
-            <div class="event-body">
-              <div class="event-name">No upcoming events</div>
-              <div class="event-sub">Your calendar is clear!</div>
-            </div>
+            <div class="event-body"><div class="event-name">No upcoming events</div></div>
           </div>`;
         return;
       }
 
       const today = new Date().toDateString();
       document.getElementById('events-header').textContent = 'Today & Upcoming';
-
       document.getElementById('event-list').innerHTML = events.map((event, i) => {
-        const start   = event.start;
-        const eventDate = start.date
-          ? new Date(start.date + 'T00:00:00')
-          : new Date(start.dateTime);
+        const start     = event.start;
+        const eventDate = start.date ? new Date(start.date + 'T00:00:00') : new Date(start.dateTime);
         const isToday   = eventDate.toDateString() === today;
-        const timeStr   = formatEventTime(start);
-        const dayStr    = formatEventDay(start);
-        const color     = dotColors[i % dotColors.length];
+        const color     = CAL_COLORS[i % CAL_COLORS.length];
         const location  = event.location ? event.location.split(',')[0] : '';
-        const sub       = location || '';
-
         return `
           <div class="event-item ${isToday ? '' : 'upcoming'}">
             <div class="event-bar" style="background:${color}"></div>
-            <div class="event-time" style="line-height:1.3">${isToday ? timeStr : dayStr}</div>
+            <div class="event-time" style="line-height:1.3">${isToday ? formatEventTime(start) : formatEventDay(start)}</div>
             <div class="event-body">
               <div class="event-name">${event.summary}</div>
-              ${sub ? `<div class="event-sub">${sub}</div>` : ''}
+              ${location ? `<div class="event-sub">${location}</div>` : ''}
             </div>
           </div>`;
       }).join('');
 
     } catch(e) {
       console.error('Calendar fetch failed:', e);
-      document.getElementById('event-list').innerHTML = `
-        <div class="event-item">
-          <div class="event-bar" style="background:var(--ink-muted)"></div>
-          <div class="event-time">--</div>
-          <div class="event-body">
-            <div class="event-name">Calendar unavailable</div>
-            <div class="event-sub">${e.message}</div>
-          </div>
-        </div>`;
     }
   }
 
