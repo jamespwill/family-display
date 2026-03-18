@@ -667,8 +667,9 @@
         </div>
 
         <div class="lb-footer">
-          <div class="lb-footer-lbl">Week of July 7 – July 13</div>
-          <div class="lb-week-badge"><span class="emoji">🏆</span> Resets Sunday</div>
+          <div class="lb-footer-lbl">Week of Jul 13 – Jul 19</div>
+          <!-- CHANGED: updated badge text to reflect Friday reset -->
+          <div class="lb-week-badge"><span class="emoji">🏆</span> Resets Fri 11 PM</div>
         </div>
       </div>
     </div>
@@ -777,95 +778,6 @@
 
   fetchWeather();
   setInterval(fetchWeather, 10 * 60 * 1000);
-
-  /* ── Leaderboard ──
-     Members array — swap photo paths and scores from Airtable in production.
-     Rankings auto-sort by score descending every render.
-  */
-  const members = [
-    {
-      name: 'Ella',
-      color: 'var(--ella)',
-      photo: 'photos/ella.jpg',      // ← swap to real path
-      initial: 'E',
-      score: 142,
-      tasks: 14,
-      ptsToday: 22,
-      streak: 5,
-      streakIcon: '🔥'
-    },
-    {
-      name: 'Lindsey',
-      color: 'var(--lindsey)',
-      photo: 'photos/lindsey.jpg',
-      initial: 'L',
-      score: 110,
-      tasks: 11,
-      ptsToday: 15,
-      streak: 3,
-      streakIcon: '⚡'
-    },
-    {
-      name: 'James',
-      color: 'var(--james)',
-      photo: 'photos/james.jpg',
-      initial: 'J',
-      score: 88,
-      tasks: 9,
-      ptsToday: 10,
-      streak: 2,
-      streakIcon: '📅'
-    }
-  ];
-
-  function renderLeaderboard() {
-    // Sort descending — this is what makes it dynamic
-    const sorted = [...members].sort((a, b) => b.score - a.score);
-    const top = sorted[0].score;
-    const container = document.getElementById('lb-rows');
-    const rankClasses = ['r1','r2','r3'];
-    const rankLabels  = ['1','2','3'];
-    const rankGold    = [true, false, false];
-
-    container.innerHTML = sorted.map((m, i) => {
-      const barPct = Math.round((m.score / top) * 100);
-      const gap = i === 0
-        ? `Leading by <b>${m.score - sorted[1].score}</b> pts`
-        : `<b>${sorted[0].score - m.score}</b> pts back`;
-      const crown = i === 0 ? `<div class="lb-crown">👑</div>` : '';
-
-      return `
-        <div class="lb-member ${rankClasses[i]}">
-          <div class="lb-top">
-            <div class="lb-rank-n ${rankGold[i] ? 'gold' : ''}">${rankLabels[i]}</div>
-            <div class="lb-crown-wrap">
-              ${crown}
-              <div class="lb-avatar" style="background:${m.color}">
-                <img src="${m.photo}" alt="${m.name}"
-                     onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-                <div class="lb-avatar-fb" style="background:${m.color};display:none">${m.initial}</div>
-              </div>
-            </div>
-            <div class="lb-name-col">
-              <div class="lb-name">${m.name}</div>
-              <div class="lb-streak">${m.streakIcon} ${m.streak}-day streak</div>
-            </div>
-            <div class="lb-score-col">
-              <div class="lb-score">${m.score}</div>
-              <div class="lb-score-lbl">pts</div>
-            </div>
-          </div>
-          <div class="lb-bar-wrap">
-            <div class="lb-bar-fill" style="width:${barPct}%;background:${m.color}"></div>
-          </div>
-          <div class="lb-stats">
-            <div class="lb-stat"><b>${m.tasks}</b> tasks</div>
-            <div class="lb-stat"><b>+${m.ptsToday}</b> today</div>
-            <div class="lb-stat">${gap}</div>
-          </div>
-        </div>`;
-    }).join('');
-  }
 
   /* ── Dynamic Calendar Grid ── */
   const FULL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -1147,11 +1059,30 @@
     'James':   { color: 'var(--james)',   initial: 'J', photo: 'photos/james.jpg',   streakIcon: '📅' },
   };
 
+  /*
+   * CHANGED: getWeekStart() — previously reset on Sunday at midnight.
+   * Now resets on Friday at 11:00 PM local time so both the TV dashboard
+   * and the mobile PWA count from the same anchor point, and totals
+   * are fresh for the Friday evening winner announcement.
+   */
   function getWeekStart() {
     const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+
+    // How many days ago was last Friday?
+    // Fri=0 days ago, Sat=1, Sun=2, Mon=3, Tue=4, Wed=5, Thu=6
+    const daysSinceFriday = (dayOfWeek + 2) % 7;
+
     const start = new Date(now);
-    start.setDate(now.getDate() - now.getDay());
-    start.setHours(0, 0, 0, 0);
+    start.setDate(now.getDate() - daysSinceFriday);
+    start.setHours(23, 0, 0, 0); // 11:00 PM
+
+    // If that time is still in the future (it's Friday but before 11 PM),
+    // step back one more week so we don't count this incomplete period
+    if (start > now) {
+      start.setDate(start.getDate() - 7);
+    }
+
     return start.toISOString();
   }
 
@@ -1253,13 +1184,13 @@
         </div>`;
     }).join('');
 
-    // Update footer week range
-    const now = new Date();
-    const sun = new Date(now); sun.setDate(now.getDate() - now.getDay());
-    const sat = new Date(sun); sat.setDate(sun.getDate() + 6);
+    // CHANGED: footer date range now runs Fri → Thu to match the new reset schedule
+    const fridayStart = new Date(getWeekStart());
+    const thursdayEnd = new Date(fridayStart);
+    thursdayEnd.setDate(fridayStart.getDate() + 6); // Fri + 6 = following Thursday
     const fmt = d => `${FULL_MONTHS[d.getMonth()].slice(0,3)} ${d.getDate()}`;
     document.querySelector('.lb-footer-lbl').textContent =
-      `Week of ${fmt(sun)} – ${fmt(sat)}`;
+      `Week of ${fmt(fridayStart)} – ${fmt(thursdayEnd)}`;
   }
 
   fetchLeaderboard();
