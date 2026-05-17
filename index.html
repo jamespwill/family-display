@@ -1053,6 +1053,11 @@
   const AT_BASE  = 'appkSRBahE13BDLzQ';
   const AT_TABLE = 'tblcssIG6Y4IMpHRR';
 
+  // Polling config — 30 min keeps us under Airtable's 1,000/month free cap
+  const LB_POLL_INTERVAL_MS = 30 * 60 * 1000;
+  const LB_CACHE_KEY        = 'lb_cache_v1';
+  const LB_CACHE_TIME_KEY   = 'lb_cache_time_v1';
+
   const MEMBER_META = {
     'Ella':    { color: 'var(--ella)',    initial: 'E', photo: 'photos/ella.jpg',    streakIcon: '🔥' },
     'Lindsey': { color: 'var(--lindsey)', initial: 'L', photo: 'photos/lindsey.jpg', streakIcon: '⚡' },
@@ -1060,29 +1065,16 @@
   };
 
   /*
-   * CHANGED: getWeekStart() — previously reset on Sunday at midnight.
-   * Now resets on Friday at 11:00 PM local time so both the TV dashboard
-   * and the mobile PWA count from the same anchor point, and totals
-   * are fresh for the Friday evening winner announcement.
+   * Week resets Friday at 11:00 PM local — shared anchor with the PWA.
    */
   function getWeekStart() {
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
-
-    // How many days ago was last Friday?
-    // Fri=0 days ago, Sat=1, Sun=2, Mon=3, Tue=4, Wed=5, Thu=6
+    const dayOfWeek = now.getDay(); // 0=Sun ... 5=Fri ... 6=Sat
     const daysSinceFriday = (dayOfWeek + 2) % 7;
-
     const start = new Date(now);
     start.setDate(now.getDate() - daysSinceFriday);
-    start.setHours(23, 0, 0, 0); // 11:00 PM
-
-    // If that time is still in the future (it's Friday but before 11 PM),
-    // step back one more week so we don't count this incomplete period
-    if (start > now) {
-      start.setDate(start.getDate() - 7);
-    }
-
+    start.setHours(23, 0, 0, 0);
+    if (start > now) start.setDate(start.getDate() - 7);
     return start.toISOString();
   }
 
@@ -1092,7 +1084,32 @@
     return d.toISOString();
   }
 
+  // ── Cache helpers ──
+  function saveLeaderboardCache(members) {
+    try {
+      localStorage.setItem(LB_CACHE_KEY, JSON.stringify(members));
+      localStorage.setItem(LB_CACHE_TIME_KEY, String(Date.now()));
+    } catch(e) { /* localStorage full or unavailable — silently ignore */ }
+  }
+
+  function loadLeaderboardCache() {
+    try {
+      const raw = localStorage.getItem(LB_CACHE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch(e) {
+      return null;
+    }
+  }
+
   async function fetchLeaderboard() {
+    // Skip if the tab isn't visible — saves API calls when TV is off
+    // or browser is backgrounded. We'll re-fetch when visibility returns.
+    if (document.visibilityState !== 'visible') {
+      console.log('[Leaderboard] Skipping fetch — tab not visible');
+      return;
+    }
+
     try {
       const weekStart  = getWeekStart();
       const todayStart = getTodayStart();
@@ -1105,9 +1122,15 @@
       const res  = await fetch(url, {
         headers: { 'Authorization': `Bearer ${AT_TOKEN}` }
       });
-      const data = await res.json();
 
-      if (!data.records) { console.error('Airtable error:', data); return; }
+      // Handle rate-limit or auth errors gracefully — keep cached data on screen
+      if (!res.ok) {
+        console.error(`[Leaderboard] Airtable returned ${res.status}, keeping cached display`);
+        return;
+      }
+
+      const data = await res.json();
+      if (!data.records) { console.error('[Leaderboard] Airtable error:', data); return; }
 
       // Aggregate per person
       const totals = {};
@@ -1132,10 +1155,13 @@
         ptsToday: Math.round(t.ptsToday),
       }));
 
+      saveLeaderboardCache(members);
       renderLeaderboard(members);
+      console.log('[Leaderboard] Refreshed from Airtable at', new Date().toLocaleTimeString());
 
     } catch(e) {
-      console.error('Leaderboard fetch failed:', e);
+      console.error('[Leaderboard] Fetch failed:', e);
+      // Network error — cached data stays on screen, no broken UI
     }
   }
 
@@ -1184,17 +1210,30 @@
         </div>`;
     }).join('');
 
-    // CHANGED: footer date range now runs Fri → Thu to match the new reset schedule
+    // Footer date range now runs Fri → Thu to match the Friday reset schedule
     const fridayStart = new Date(getWeekStart());
     const thursdayEnd = new Date(fridayStart);
-    thursdayEnd.setDate(fridayStart.getDate() + 6); // Fri + 6 = following Thursday
+    thursdayEnd.setDate(fridayStart.getDate() + 6);
     const fmt = d => `${FULL_MONTHS[d.getMonth()].slice(0,3)} ${d.getDate()}`;
     document.querySelector('.lb-footer-lbl').textContent =
       `Week of ${fmt(fridayStart)} – ${fmt(thursdayEnd)}`;
   }
 
+  // ── Boot: show cached data instantly, then fetch fresh ──
+  const cached = loadLeaderboardCache();
+  if (cached && cached.length) {
+    renderLeaderboard(cached);
+  }
   fetchLeaderboard();
-  setInterval(fetchLeaderboard, 2 * 60 * 1000); // refresh every 2 minutes
+  setInterval(fetchLeaderboard, LB_POLL_INTERVAL_MS);
+
+  // Refresh as soon as the tab becomes visible again (e.g., TV turned back on)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[Leaderboard] Tab visible — fetching fresh data');
+      fetchLeaderboard();
+    }
+  });
 </script>
 </body>
 </html>
