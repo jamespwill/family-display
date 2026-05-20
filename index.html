@@ -177,9 +177,16 @@
     margin-bottom:10px; opacity:.7;
   }
   .weather-now {
-    display:flex; align-items:center; gap:10px; margin-bottom:14px;
+    display:flex; align-items:center; gap:12px; margin-bottom:14px;
   }
-  .weather-icon { font-size:38px; line-height:1; }
+  /* Hero "now" weather icon — gold to match accent eyebrows */
+  .weather-icon {
+    width:44px; height:44px;
+    color: var(--accent-gold);
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .weather-icon svg { width:100%; height:100%; display:block; }
   .weather-temp {
     font-family:'Fraunces',serif;
     font-size:42px; font-weight:600; color:#fff; line-height:1;
@@ -228,7 +235,13 @@
     width:36px; flex-shrink:0;
   }
   .fc-day-name.today-fc { color:var(--accent-gold); }
-  .fc-icon { font-size:18px; flex:1; text-align:center; }
+  /* Forecast icons — muted gray, matching low-temp text weight */
+  .fc-icon {
+    flex:1;
+    display:flex; align-items:center; justify-content:center;
+    color: var(--ink-muted);
+  }
+  .fc-icon svg { width:22px; height:22px; display:block; }
   .fc-hi {
     font-family:'Fraunces',serif;
     font-size:16px; font-weight:600; color:#fff;
@@ -556,7 +569,7 @@
         <div class="weather-section">
           <div class="dark-eyebrow">Wichita, KS · Now</div>
           <div class="weather-now">
-            <div class="weather-icon" id="w-icon">⛅</div>
+            <div class="weather-icon" id="w-icon"></div>
             <div>
               <div class="weather-temp" id="w-temp">88<span class="weather-unit">°F</span></div>
               <div class="weather-desc" id="w-desc">Scattered Clouds</div>
@@ -587,36 +600,8 @@
         <div style="position:relative;z-index:1;flex:1;display:flex;flex-direction:column;min-height:0;">
           <div class="forecast-label">5-Day Forecast</div>
           <div class="forecast-row" id="forecast-row">
-          <div class="forecast-day">
-            <div class="fc-day-name today-fc">Today</div>
-            <div class="fc-icon">⛅</div>
-            <div class="fc-hi">87°</div>
-            <div class="fc-lo">80°</div>
+            <!-- Forecast rows are rendered by JavaScript from the OpenWeather API -->
           </div>
-          <div class="forecast-day">
-            <div class="fc-day-name ">Mon</div>
-            <div class="fc-icon">☀️</div>
-            <div class="fc-hi">92°</div>
-            <div class="fc-lo">72°</div>
-          </div>
-          <div class="forecast-day">
-            <div class="fc-day-name ">Tue</div>
-            <div class="fc-icon">🌥</div>
-            <div class="fc-hi">73°</div>
-            <div class="fc-lo">53°</div>
-          </div>
-          <div class="forecast-day">
-            <div class="fc-day-name ">Wed</div>
-            <div class="fc-icon">🌥</div>
-            <div class="fc-hi">71°</div>
-            <div class="fc-lo">52°</div>
-          </div>
-          <div class="forecast-day">
-            <div class="fc-day-name ">Thu</div>
-            <div class="fc-icon">🌧</div>
-            <div class="fc-hi">67°</div>
-            <div class="fc-lo">55°</div>
-          </div></div>
         </div>
 
       </div>
@@ -702,21 +687,88 @@
   }
   tick(); setInterval(tick, 1000);
 
+  /* ══════════════════════════════
+     WEATHER ICONS — Inline SVG set
+     Replaces emoji glyphs so icons render
+     identically on all devices (incl. Pi).
+     All icons use stroke="currentColor" and
+     fill="none" so they inherit the parent
+     element's color via CSS.
+  ══════════════════════════════ */
+  const WEATHER_ICONS = {
+    // ☀️ Clear / sunny
+    sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+    </svg>`,
+    // 🌤 Mostly sunny (sun behind small cloud)
+    sunCloud: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="3"/>
+      <path d="M8 1.5v1.5M8 13v1.5M1.5 8h1.5M13 8h1.5M3.4 3.4l1.06 1.06M11.54 11.54l1.06 1.06M3.4 12.6l1.06-1.06M11.54 4.46l1.06-1.06"/>
+      <path d="M16 18a4 4 0 0 0-7.5-2 3 3 0 0 0-.5 5.95"/>
+      <path d="M16 18a3 3 0 0 0 0-6c-.32 0-.63.05-.92.14"/>
+    </svg>`,
+    // ⛅ Partly cloudy (sun + larger cloud)
+    partlyCloudy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v1.5M5.6 5.6l1.06 1.06M3 12h1.5M18.4 5.6l-1.06 1.06"/>
+      <circle cx="12" cy="9" r="2.5"/>
+      <path d="M7 20a4 4 0 0 1-.88-7.9A5 5 0 0 1 16 13.5a3.5 3.5 0 0 1 1 6.5H7z"/>
+    </svg>`,
+    // 🌥 Mostly cloudy / cloudy
+    cloud: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 19a4.5 4.5 0 0 1-1-8.88A5.5 5.5 0 0 1 17 11.5a4 4 0 0 1 .5 7.5H7z"/>
+    </svg>`,
+    // 🌧 Rain
+    rain: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 15a4.5 4.5 0 0 1-1-8.88A5.5 5.5 0 0 1 17 7.5a4 4 0 0 1 .5 7.5H7z"/>
+      <path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/>
+    </svg>`,
+    // 🌦 Showers (sun + rain)
+    showers: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v1.5M5.6 4.6l1.06 1.06M3 11h1.5M18.4 4.6l-1.06 1.06"/>
+      <circle cx="12" cy="8" r="2.5"/>
+      <path d="M7 17a4 4 0 0 1-.88-7.9A5 5 0 0 1 16 10.5a3.5 3.5 0 0 1 1 6.5H7z"/>
+      <path d="M9 20l-1 2M14 20l-1 2"/>
+    </svg>`,
+    // ⛈ Thunderstorm
+    thunder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 15a4.5 4.5 0 0 1-1-8.88A5.5 5.5 0 0 1 17 7.5a4 4 0 0 1 .5 7.5H7z"/>
+      <path d="M12 14l-2 4h3l-2 4"/>
+    </svg>`,
+    // 🌨 Snow
+    snow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 15a4.5 4.5 0 0 1-1-8.88A5.5 5.5 0 0 1 17 7.5a4 4 0 0 1 .5 7.5H7z"/>
+      <circle cx="9"  cy="20" r=".5" fill="currentColor"/>
+      <circle cx="13" cy="20" r=".5" fill="currentColor"/>
+      <circle cx="17" cy="20" r=".5" fill="currentColor"/>
+    </svg>`,
+    // 🌫 Mist / fog / haze
+    mist: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 8h14M5 12h14M3 16h14M7 20h12"/>
+    </svg>`,
+  };
+
   /* ── Weather ── */
   const WEATHER_KEY = '282edf8b948e5fcb58421b51e262ea82';
   const LAT         = '37.6872';
   const LON         = '-97.3301';
 
+  // Map OpenWeather condition IDs → our SVG icon set.
+  // Reference: https://openweathermap.org/weather-conditions
   function weatherIcon(id) {
-    if (id >= 200 && id < 300) return '⛈';
-    if (id >= 300 && id < 400) return '🌦';
-    if (id >= 500 && id < 600) return '🌧';
-    if (id >= 600 && id < 700) return '🌨';
-    if (id >= 700 && id < 800) return '🌫';
-    if (id === 800)             return '☀️';
-    if (id === 801)             return '🌤';
-    if (id === 802)             return '⛅';
-    return '🌥';
+    if (id >= 200 && id < 300) return WEATHER_ICONS.thunder;       // Thunderstorm
+    if (id >= 300 && id < 400) return WEATHER_ICONS.showers;       // Drizzle
+    if (id >= 500 && id < 600) {
+      // 500-504 = rain, 511 = freezing, 520-531 = showers
+      if (id >= 520) return WEATHER_ICONS.showers;
+      return WEATHER_ICONS.rain;
+    }
+    if (id >= 600 && id < 700) return WEATHER_ICONS.snow;          // Snow
+    if (id >= 700 && id < 800) return WEATHER_ICONS.mist;          // Atmosphere (mist/fog/haze)
+    if (id === 800)             return WEATHER_ICONS.sun;          // Clear
+    if (id === 801)             return WEATHER_ICONS.sunCloud;     // Few clouds
+    if (id === 802)             return WEATHER_ICONS.partlyCloudy; // Scattered clouds
+    return WEATHER_ICONS.cloud;                                    // 803, 804 = broken/overcast
   }
 
   const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -729,7 +781,7 @@
       );
       const cur = await curRes.json();
 
-      document.getElementById('w-icon').textContent  = weatherIcon(cur.weather[0].id);
+      document.getElementById('w-icon').innerHTML    = weatherIcon(cur.weather[0].id);
       document.getElementById('w-temp').innerHTML    = `${Math.round(cur.main.temp)}<span class="weather-unit">°F</span>`;
       document.getElementById('w-desc').textContent  = cur.weather[0].description.replace(/\b\w/g, c => c.toUpperCase());
       document.getElementById('w-hi').textContent    = `${Math.round(cur.main.temp_max)}°`;
