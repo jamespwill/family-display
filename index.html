@@ -1104,6 +1104,9 @@
   const LB_CACHE_KEY        = 'lb_cache_v1';
   const LB_CACHE_TIME_KEY   = 'lb_cache_time_v1';
   const LB_LAST_NOTIFY_KEY  = 'lb_last_notify_v1';
+  // Last-week totals — frozen after each Fri 11 PM reset.
+  // Stored as { weekStart: ISOString, totals: { Name: score } }
+  const LB_LAST_WEEK_KEY    = 'lb_last_week_v1';
 
   const MEMBER_META = {
     'Ella':    { color: 'var(--ella)',    initial: 'E', photo: 'photos/ella.jpg',    streakIcon: '🔥' },
@@ -1126,6 +1129,89 @@
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d.toISOString();
+  }
+
+  // Returns the previous week's start as ISO (one full week before getWeekStart).
+  // Used to query the Fri-Thu window that just ended.
+  function getLastWeekStart() {
+    const current = new Date(getWeekStart());
+    const prev    = new Date(current);
+    prev.setDate(current.getDate() - 7);
+    return prev.toISOString();
+  }
+
+  // Last-week totals are frozen after Fri 11 PM. We compute once per week
+  // and cache in localStorage — adds ~4 Airtable calls/month total.
+  function loadLastWeekCache() {
+    try {
+      const raw = localStorage.getItem(LB_LAST_WEEK_KEY);
+      if (!raw) return null;
+      const cached = JSON.parse(raw);
+      // Stale if the cached weekStart doesn't match the current weekStart
+      // (i.e. we've crossed a Fri 11 PM boundary since we last computed).
+      if (cached.weekStart !== getWeekStart()) return null;
+      return cached.totals;
+    } catch(e) {
+      return null;
+    }
+  }
+
+  function saveLastWeekCache(totals) {
+    try {
+      localStorage.setItem(LB_LAST_WEEK_KEY, JSON.stringify({
+        weekStart: getWeekStart(),
+        totals: totals,
+      }));
+    } catch(e) {}
+  }
+
+  // Fetches and sums last week's points by person.
+  // Only called when the cache is empty or stale (typically once per week).
+  async function fetchLastWeekTotals() {
+    if (document.visibilityState !== 'visible') return null;
+
+    try {
+      const lastWeekStart = getLastWeekStart();
+      const thisWeekStart = getWeekStart();
+
+      // Tight filter: only records in the previous Fri-Thu window
+      const formula = `AND(IS_AFTER({Logged At}, '${lastWeekStart}'), IS_BEFORE({Logged At}, '${thisWeekStart}'))`;
+      const url = `https://api.airtable.com/v0/${AT_BASE}/${AT_TABLE}`
+        + `?filterByFormula=${encodeURIComponent(formula)}`
+        + `&fields[]=Person&fields[]=Points`
+        + `&pageSize=100`;
+
+      const res = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${AT_TOKEN}` }
+      });
+
+      if (!res.ok) {
+        console.error(`[LastWeek] Airtable returned ${res.status}, will retry on next refresh`);
+        return null;
+      }
+
+      const data = await res.json();
+      if (!data.records) return null;
+
+      const totals = {};
+      Object.keys(MEMBER_META).forEach(name => { totals[name] = 0; });
+      data.records.forEach(r => {
+        const name = r.fields['Person'];
+        const pts  = r.fields['Points'] || 0;
+        if (totals[name] !== undefined) totals[name] += pts;
+      });
+
+      // Round for display
+      Object.keys(totals).forEach(name => { totals[name] = Math.round(totals[name]); });
+
+      saveLastWeekCache(totals);
+      console.log('[LastWeek] Computed and cached:', totals);
+      return totals;
+
+    } catch(e) {
+      console.error('[LastWeek] Fetch failed:', e);
+      return null;
+    }
   }
 
   function saveLeaderboardCache(members) {
@@ -1196,7 +1282,15 @@
       }));
 
       saveLeaderboardCache(members);
-      renderLeaderboard(members);
+
+      // Compute last week's totals if we don't have a fresh cache.
+      // Cheap: only fires once per week (totals freeze at Fri 11 PM reset).
+      let lastWeek = loadLastWeekCache();
+      if (!lastWeek) {
+        lastWeek = await fetchLastWeekTotals();
+      }
+
+      renderLeaderboard(members, lastWeek);
       console.log('[Leaderboard] Refreshed from Airtable at', new Date().toLocaleTimeString());
 
     } catch(e) {
@@ -1229,7 +1323,7 @@
     }
   }
 
-  function renderLeaderboard(members) {
+  function renderLeaderboard(members, lastWeek) {
     const sorted = [...members].sort((a, b) => b.score - a.score);
     const top    = Math.max(sorted[0].score, 1);
     const container = document.getElementById('lb-rows');
@@ -1237,9 +1331,15 @@
 
     container.innerHTML = sorted.map((m, i) => {
       const barPct = Math.round((m.score / top) * 100);
-      const gap = i === 0
-        ? `Leading by <b>${m.score - sorted[1].score}</b> pts`
-        : `<b>${sorted[0].score - m.score}</b> pts back`;
+      // Replaces the "Leading by / pts back" pill with last week's final score.
+      // Falls back to a dash if we couldn't load last week's data
+      // (e.g. first run after cache wipe + Airtable unreachable).
+      const lastWkScore = lastWeek && lastWeek[m.name] !== undefined
+        ? lastWeek[m.name]
+        : null;
+      const lastWkPill = lastWkScore !== null
+        ? `Last wk: <b>${lastWkScore}</b>`
+        : `Last wk: <b>—</b>`;
       const crown = i === 0 ? `<div class="lb-crown"><span class="emoji">👑</span></div>` : '';
 
       return `
@@ -1269,7 +1369,7 @@
           <div class="lb-stats">
             <div class="lb-stat"><b>${m.tasks}</b> tasks</div>
             <div class="lb-stat"><b>+${m.ptsToday}</b> today</div>
-            <div class="lb-stat">${gap}</div>
+            <div class="lb-stat">${lastWkPill}</div>
           </div>
         </div>`;
     }).join('');
@@ -1284,7 +1384,7 @@
 
   // ── Boot ──
   const cached = loadLeaderboardCache();
-  if (cached && cached.length) renderLeaderboard(cached);
+  if (cached && cached.length) renderLeaderboard(cached, loadLastWeekCache());
 
   // Initial Airtable fetch
   fetchLeaderboard();
