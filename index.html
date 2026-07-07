@@ -1195,7 +1195,9 @@
 
   // Timing config
   const NOTIFY_POLL_MS      = 5 * 1000;          // Check Upstash every 5 seconds for "anything new?"
-  const SAFETY_POLL_MS      = 30 * 60 * 1000;    // Full Airtable refresh every 30 min (safety net)
+  const SAFETY_POLL_MS      = 6 * 60 * 60 * 1000; // Full Airtable refresh every 6 hours (safety net)
+                                                  // ~120 calls/month. The notify channel handles
+                                                  // real-time updates; this only catches missed events.
   const LB_CACHE_KEY        = 'lb_cache_v1';
   const LB_CACHE_TIME_KEY   = 'lb_cache_time_v1';
   const LB_LAST_NOTIFY_KEY  = 'lb_last_notify_v1';
@@ -1491,12 +1493,14 @@
   // Slow safety poll — full Airtable fetch (catches anything the notify channel missed)
   setInterval(fetchLeaderboard, SAFETY_POLL_MS);
 
-  // Refresh as soon as the tab becomes visible again
+  // When the tab becomes visible again, ask the (free) notify endpoint
+  // whether anything changed — it triggers a full Airtable fetch only if so.
+  // Previously this called fetchLeaderboard() unconditionally, which cost an
+  // Airtable call every time the screen/tab woke up.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       console.log('[Leaderboard] Tab visible — checking for updates');
       checkForUpdates();
-      fetchLeaderboard();
     }
   });
 </script>
