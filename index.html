@@ -739,10 +739,12 @@
     </svg>`,
   };
 
-  /* ── Weather ── */
-  const WEATHER_KEY = '282edf8b948e5fcb58421b51e262ea82';
-  const LAT         = '37.6872';
-  const LON         = '-97.3301';
+  /* ── Weather ──
+     Fetched via the Vercel proxy (/api/weather) instead of calling
+     OpenWeatherMap directly — keeps the API key out of this public repo.
+     The route caches responses server-side for 10 min, so polling here
+     costs nothing extra on the OpenWeather side. */
+  const WEATHER_API_URL = 'https://family-dashboard-rho.vercel.app/api/weather';
 
   function weatherIcon(id) {
     if (id >= 200 && id < 300) return WEATHER_ICONS.thunder;
@@ -763,45 +765,29 @@
 
   async function fetchWeather() {
     try {
-      const curRes = await fetch(
-        `https://api.openweathermap.org/data/2.5/weather?lat=${LAT}&lon=${LON}&units=imperial&appid=${WEATHER_KEY}`,
-        { mode: 'cors' }
-      );
-      const cur = await curRes.json();
+      const res = await fetch(WEATHER_API_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Weather API returned ${res.status}`);
+      const data = await res.json();
+      const cur  = data.current;
 
-      document.getElementById('w-icon').innerHTML    = weatherIcon(cur.weather[0].id);
-      document.getElementById('w-temp').innerHTML    = `${Math.round(cur.main.temp)}<span class="weather-unit">°F</span>`;
-      document.getElementById('w-desc').textContent  = cur.weather[0].description.replace(/\b\w/g, c => c.toUpperCase());
-      document.getElementById('w-hi').textContent    = `${Math.round(cur.main.temp_max)}°`;
-      document.getElementById('w-lo').textContent    = `${Math.round(cur.main.temp_min)}°`;
-      document.getElementById('w-hum').textContent   = `${cur.main.humidity}%`;
-      document.getElementById('w-wind').textContent  = `${Math.round(cur.wind.speed)} mph`;
+      document.getElementById('w-icon').innerHTML    = weatherIcon(cur.conditionId);
+      document.getElementById('w-temp').innerHTML    = `${cur.temp}<span class="weather-unit">°F</span>`;
+      document.getElementById('w-desc').textContent  = cur.description;
+      document.getElementById('w-hi').textContent    = `${cur.tempMax}°`;
+      document.getElementById('w-lo').textContent    = `${cur.tempMin}°`;
+      document.getElementById('w-hum').textContent   = `${cur.humidity}%`;
+      document.getElementById('w-wind').textContent  = `${cur.windSpeed} mph`;
 
-      const foreRes = await fetch(
-        `https://api.openweathermap.org/data/2.5/forecast?lat=${LAT}&lon=${LON}&units=imperial&appid=${WEATHER_KEY}`,
-        { mode: 'cors' }
-      );
-      const fore = await foreRes.json();
+      const today = new Date().toDateString();
 
-      const days = {};
-      fore.list.forEach(item => {
-        const d   = new Date(item.dt * 1000);
-        const key = d.toDateString();
-        if (!days[key]) days[key] = { date: d, hi: -999, lo: 999, icon: item.weather[0].id };
-        days[key].hi  = Math.max(days[key].hi, Math.round(item.main.temp_max));
-        days[key].lo  = Math.min(days[key].lo, Math.round(item.main.temp_min));
-        if (d.getHours() >= 11 && d.getHours() <= 13) days[key].icon = item.weather[0].id;
-      });
-
-      const upcoming = Object.values(days).slice(0, 5);
-      const today    = new Date().toDateString();
-
-      document.getElementById('forecast-row').innerHTML = upcoming.map(d => {
-        const isToday = d.date.toDateString() === today;
+      document.getElementById('forecast-row').innerHTML = data.forecast.map(d => {
+        // d.date is "YYYY-MM-DD" (UTC-based grouping from the API route).
+        const dObj     = new Date(d.date + 'T12:00:00'); // noon avoids TZ edge-flips
+        const isToday  = dObj.toDateString() === today;
         return `
           <div class="forecast-day">
-            <div class="fc-day-name ${isToday ? 'today-fc' : ''}">${isToday ? 'Today' : DAY_NAMES[d.date.getDay()]}</div>
-            <div class="fc-icon">${weatherIcon(d.icon)}</div>
+            <div class="fc-day-name ${isToday ? 'today-fc' : ''}">${isToday ? 'Today' : DAY_NAMES[dObj.getDay()]}</div>
+            <div class="fc-icon">${weatherIcon(d.conditionId)}</div>
             <div class="fc-hi">${d.hi}°</div>
             <div class="fc-lo">${d.lo}°</div>
           </div>`;
@@ -867,19 +853,16 @@
     }
   }
 
-  if (!localStorage.getItem('cal_reauth_v3')) {
-    localStorage.clear();
-    localStorage.setItem('cal_reauth_v3', '1');
-  }
-
   renderCalendarGrid({});
 
-  /* ── Google Calendar OAuth (Device Flow) ── */
-  const CAL_ID        = 'jamespwill@gmail.com';
-  const OAUTH_CLIENT  = '339236203935-ngpevr8mmhsov3c6pmn7s4556qiaujef.apps.googleusercontent.com';
-  const OAUTH_SECRET  = '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';
-  const CAL_SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly';
-  const CAL_COLORS    = ['var(--ella)','var(--lindsey)','var(--james)','var(--accent-gold)'];
+  /* ── Google Calendar OAuth (Device Flow) ──
+     All three OAuth operations (start, poll, refresh) now go through the
+     Vercel proxy (/api/gtoken) instead of oauth2.googleapis.com directly —
+     the client ID and secret live only in Vercel env vars, never in this
+     public repo. */
+  const CAL_ID       = 'jamespwill@gmail.com';
+  const GTOKEN_URL   = 'https://family-dashboard-rho.vercel.app/api/gtoken';
+  const CAL_COLORS   = ['var(--ella)','var(--lindsey)','var(--james)','var(--accent-gold)'];
 
   const SHORT_DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -964,29 +947,29 @@
     return localStorage.getItem('cal_refresh_token');
   }
 
+  // Small helper: POST { action, ...params } to the gtoken proxy.
+  async function callGtoken(action, params = {}) {
+    const res = await fetch(GTOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...params }),
+    });
+    return { status: res.status, data: await res.json() };
+  }
+
   // Refreshes the access token using the refresh token.
   // Returns: 'ok' on success, 'invalid_grant' if refresh token is dead,
   //          'transient' on network/server errors that should be retried.
   async function refreshAccessToken(refreshToken) {
     try {
-      const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id:     OAUTH_CLIENT,
-          client_secret: OAUTH_SECRET,
-          refresh_token: refreshToken,
-          grant_type:    'refresh_token'
-        })
-      });
+      const { status, data } = await callGtoken('refresh', { refresh_token: refreshToken });
 
-      // 5xx = server-side hiccup, treat as transient.
-      if (res.status >= 500) {
-        console.warn('[CalAuth] Refresh got server error', res.status);
+      // 5xx from the proxy itself = our Vercel function or Google had a
+      // hiccup upstream — treat as transient either way.
+      if (status >= 500) {
+        console.warn('[CalAuth] Refresh proxy returned server error', status);
         return 'transient';
       }
-
-      const data = await res.json();
 
       if (data.access_token) {
         calAccessToken = data.access_token;
@@ -997,8 +980,8 @@
         return 'ok';
       }
 
-      // Google explicitly says the refresh token is dead. THIS is the only
-      // case where we should clear it and prompt the user to re-auth.
+      // The proxy explicitly says the refresh token is dead. THIS is the
+      // only case where we should clear it and prompt the user to re-auth.
       if (data.error === 'invalid_grant') {
         console.error('[CalAuth] Refresh token is invalid_grant — needs re-auth.', data);
         return 'invalid_grant';
@@ -1010,7 +993,7 @@
       return 'transient';
 
     } catch(e) {
-      // Network failure (Pi offline, DNS, etc.) — definitely transient.
+      // Network failure (Pi offline, DNS, Vercel unreachable) — definitely transient.
       console.warn('[CalAuth] Refresh threw exception (network?):', e);
       return 'transient';
     }
@@ -1018,30 +1001,13 @@
 
   async function startDeviceFlow() {
     try {
-      const res  = await fetch('https://oauth2.googleapis.com/device/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: OAUTH_CLIENT,
-          scope:     CAL_SCOPE
-        })
-      });
-      const data = await res.json();
+      const { data } = await callGtoken('start');
       if (!data.device_code) { console.error('Device flow failed:', data); return; }
       showAuthOverlay(data.user_code, data.verification_url, data.expires_in);
       const interval = (data.interval || 5) * 1000;
       devicePollTimer = setInterval(async () => {
-        const pollRes  = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id:     OAUTH_CLIENT,
-            client_secret: OAUTH_SECRET,
-            device_code:   data.device_code,
-            grant_type:    'urn:ietf:params:oauth:grant-type:device_code'
-          })
-        });
-        const pollData = await pollRes.json();
+        const { data: pollData } = await callGtoken('poll', { device_code: data.device_code });
+
         if (pollData.access_token) {
           clearInterval(devicePollTimer);
           saveTokens(pollData.access_token, pollData.refresh_token, pollData.expires_in);
@@ -1049,7 +1015,17 @@
           calTokenExpiry = Date.now() + pollData.expires_in * 1000;
           hideAuthOverlay();
           fetchCalendar();
+          return;
         }
+
+        // expired_token / access_denied — the code timed out or the user
+        // declined. Stop polling and let the user request a fresh code.
+        if (pollData.error && pollData.error !== 'authorization_pending' && pollData.error !== 'slow_down') {
+          console.warn('[CalAuth] Device flow ended:', pollData.error);
+          clearInterval(devicePollTimer);
+          hideAuthOverlay();
+        }
+        // pollData.pending === true → keep waiting, do nothing this tick.
       }, interval);
     } catch(e) {
       console.error('Device flow error:', e);
@@ -1184,26 +1160,23 @@
   setInterval(fetchCalendar, 5 * 60 * 1000);
 
 
-  /* ── Leaderboard — live from Airtable ── */
-  const AT_TOKEN = 'patqFRxFfWFIyZca9.de4457c072e0b5003ff5c8d6fc69ee1f2dbf5e8dfb8a5452e7ed3feca2ccc5fb';
-  const AT_BASE  = 'appkSRBahE13BDLzQ';
-  const AT_TABLE = 'tblcssIG6Y4IMpHRR';
+  /* ── Leaderboard — via the Vercel proxy (/api/leaderboard) ──
+     The Airtable token, the pagination, the week-boundary math, and the
+     last-week freeze logic all live server-side now (api/leaderboard.js).
+     This client just displays whatever the route returns and asks it to
+     refresh when the notify channel says something changed. */
+  const LEADERBOARD_API_URL = 'https://family-dashboard-rho.vercel.app/api/leaderboard';
 
   // URL of the PWA's notify endpoint. The Pi polls GET on this URL; the PWA POSTs to it.
-  // Adjust this if your Vercel deployment URL changes.
   const NOTIFY_URL = 'https://family-dashboard-rho.vercel.app/api/notify';
 
   // Timing config
-  const NOTIFY_POLL_MS      = 5 * 1000;          // Check Upstash every 5 seconds for "anything new?"
-  const SAFETY_POLL_MS      = 6 * 60 * 60 * 1000; // Full Airtable refresh every 6 hours (safety net)
-                                                  // ~120 calls/month. The notify channel handles
-                                                  // real-time updates; this only catches missed events.
-  const LB_CACHE_KEY        = 'lb_cache_v1';
-  const LB_CACHE_TIME_KEY   = 'lb_cache_time_v1';
+  const NOTIFY_POLL_MS      = 5 * 1000;           // Check Upstash every 5 seconds for "anything new?"
+  const SAFETY_POLL_MS      = 6 * 60 * 60 * 1000; // Refresh from the proxy every 6 hours (safety net).
+                                                   // Cheap regardless of interval now — the proxy's own
+                                                   // cache means this rarely triggers an Airtable call.
+  const LB_CACHE_KEY        = 'lb_cache_v2';       // bumped: shape changed (server-computed totals)
   const LB_LAST_NOTIFY_KEY  = 'lb_last_notify_v1';
-  // Last-week totals — frozen after each Fri 11 PM reset.
-  // Stored as { weekStart: ISOString, totals: { Name: score } }
-  const LB_LAST_WEEK_KEY    = 'lb_last_week_v1';
 
   const MEMBER_META = {
     'Ella':    { color: 'var(--ella)',    initial: 'E', photo: 'photos/ella.jpg',    streakIcon: '🔥' },
@@ -1211,124 +1184,23 @@
     'James':   { color: 'var(--james)',   initial: 'J', photo: 'photos/james.jpg',   streakIcon: '📅' },
   };
 
-  function getWeekStart() {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const daysSinceFriday = (dayOfWeek + 2) % 7;
-    const start = new Date(now);
-    start.setDate(now.getDate() - daysSinceFriday);
-    start.setHours(23, 0, 0, 0);
-    if (start > now) start.setDate(start.getDate() - 7);
-    return start.toISOString();
-  }
-
-  function getTodayStart() {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }
-
-  // Returns the previous week's start as ISO (one full week before getWeekStart).
-  // Used to query the Fri-Thu window that just ended.
-  function getLastWeekStart() {
-    const current = new Date(getWeekStart());
-    const prev    = new Date(current);
-    prev.setDate(current.getDate() - 7);
-    return prev.toISOString();
-  }
-
-  // Last-week totals are frozen after Fri 11 PM. We compute once per week
-  // and cache in localStorage — adds ~4 Airtable calls/month total.
-  function loadLastWeekCache() {
+  function saveLeaderboardCache(payload) {
     try {
-      const raw = localStorage.getItem(LB_LAST_WEEK_KEY);
-      if (!raw) return null;
-      const cached = JSON.parse(raw);
-      // Stale if the cached weekStart doesn't match the current weekStart
-      // (i.e. we've crossed a Fri 11 PM boundary since we last computed).
-      if (cached.weekStart !== getWeekStart()) return null;
-      return cached.totals;
-    } catch(e) {
-      return null;
-    }
-  }
-
-  function saveLastWeekCache(totals) {
-    try {
-      localStorage.setItem(LB_LAST_WEEK_KEY, JSON.stringify({
-        weekStart: getWeekStart(),
-        totals: totals,
-      }));
-    } catch(e) {}
-  }
-
-  // Fetches and sums last week's points by person.
-  // Only called when the cache is empty or stale (typically once per week).
-  async function fetchLastWeekTotals() {
-    if (document.visibilityState !== 'visible') return null;
-
-    try {
-      const lastWeekStart = getLastWeekStart();
-      const thisWeekStart = getWeekStart();
-
-      // Tight filter: only records in the previous Fri-Thu window
-      const formula = `AND(IS_AFTER({Logged At}, '${lastWeekStart}'), IS_BEFORE({Logged At}, '${thisWeekStart}'))`;
-      const url = `https://api.airtable.com/v0/${AT_BASE}/${AT_TABLE}`
-        + `?filterByFormula=${encodeURIComponent(formula)}`
-        + `&fields[]=Person&fields[]=Points`
-        + `&pageSize=100`;
-
-      const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${AT_TOKEN}` }
-      });
-
-      if (!res.ok) {
-        console.error(`[LastWeek] Airtable returned ${res.status}, will retry on next refresh`);
-        return null;
-      }
-
-      const data = await res.json();
-      if (!data.records) return null;
-
-      const totals = {};
-      Object.keys(MEMBER_META).forEach(name => { totals[name] = 0; });
-      data.records.forEach(r => {
-        const name = r.fields['Person'];
-        const pts  = r.fields['Points'] || 0;
-        if (totals[name] !== undefined) totals[name] += pts;
-      });
-
-      // Round for display
-      Object.keys(totals).forEach(name => { totals[name] = Math.round(totals[name]); });
-
-      saveLastWeekCache(totals);
-      console.log('[LastWeek] Computed and cached:', totals);
-      return totals;
-
-    } catch(e) {
-      console.error('[LastWeek] Fetch failed:', e);
-      return null;
-    }
-  }
-
-  function saveLeaderboardCache(members) {
-    try {
-      localStorage.setItem(LB_CACHE_KEY, JSON.stringify(members));
-      localStorage.setItem(LB_CACHE_TIME_KEY, String(Date.now()));
+      localStorage.setItem(LB_CACHE_KEY, JSON.stringify(payload));
     } catch(e) {}
   }
 
   function loadLeaderboardCache() {
     try {
       const raw = localStorage.getItem(LB_CACHE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
+      return raw ? JSON.parse(raw) : null;
     } catch(e) {
       return null;
     }
   }
 
-  // Fetch fresh data from Airtable
+  // Fetch fresh data from the proxy. The route itself decides whether that
+  // means hitting Airtable or serving its own cache — we don't need to know.
   async function fetchLeaderboard() {
     if (document.visibilityState !== 'visible') {
       console.log('[Leaderboard] Skipping fetch — tab not visible');
@@ -1336,59 +1208,26 @@
     }
 
     try {
-      const weekStart  = getWeekStart();
-      const todayStart = getTodayStart();
-
-      const url = `https://api.airtable.com/v0/${AT_BASE}/${AT_TABLE}`
-        + `?filterByFormula=IS_AFTER({Logged At}, '${weekStart}')`
-        + `&fields[]=Person&fields[]=Points&fields[]=Logged%20At`
-        + `&pageSize=100`;
-
-      const res  = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${AT_TOKEN}` }
-      });
+      const res = await fetch(LEADERBOARD_API_URL, { cache: 'no-store' });
 
       if (!res.ok) {
-        console.error(`[Leaderboard] Airtable returned ${res.status}, keeping cached display`);
+        console.error(`[Leaderboard] API returned ${res.status}, keeping cached display`);
         return;
       }
 
-      const data = await res.json();
-      if (!data.records) { console.error('[Leaderboard] Airtable error:', data); return; }
+      const payload = await res.json();
+      if (!payload.totals) { console.error('[Leaderboard] Unexpected API response:', payload); return; }
 
-      const totals = {};
-      Object.keys(MEMBER_META).forEach(name => {
-        totals[name] = { score: 0, tasks: 0, ptsToday: 0 };
-      });
-
-      data.records.forEach(r => {
-        const name   = r.fields['Person'];
-        const pts    = r.fields['Points'] || 0;
-        const logged = r.fields['Logged At'];
-        if (!totals[name]) return;
-        totals[name].score += pts;
-        totals[name].tasks += 1;
-        if (logged && logged >= todayStart) totals[name].ptsToday += pts;
-      });
-
-      const members = Object.entries(totals).map(([name, t]) => ({
+      const members = Object.entries(payload.totals).map(([name, t]) => ({
         name, ...MEMBER_META[name],
-        score: Math.round(t.score),
+        score: t.score,
         tasks: t.tasks,
-        ptsToday: Math.round(t.ptsToday),
+        ptsToday: t.ptsToday,
       }));
 
-      saveLeaderboardCache(members);
-
-      // Compute last week's totals if we don't have a fresh cache.
-      // Cheap: only fires once per week (totals freeze at Fri 11 PM reset).
-      let lastWeek = loadLastWeekCache();
-      if (!lastWeek) {
-        lastWeek = await fetchLastWeekTotals();
-      }
-
-      renderLeaderboard(members, lastWeek);
-      console.log('[Leaderboard] Refreshed from Airtable at', new Date().toLocaleTimeString());
+      saveLeaderboardCache(payload);
+      renderLeaderboard(members, payload.lastWeek, payload.weekStart);
+      console.log(`[Leaderboard] Refreshed at ${new Date().toLocaleTimeString()} (cached: ${payload.cached})`);
 
     } catch(e) {
       console.error('[Leaderboard] Fetch failed:', e);
@@ -1396,7 +1235,7 @@
   }
 
   // Lightweight check: did the PWA bump the notify timestamp since we last looked?
-  // If yes, trigger a full Airtable fetch.
+  // If yes, ask the proxy to refresh (which itself only hits Airtable if needed).
   async function checkForUpdates() {
     if (document.visibilityState !== 'visible') return;
 
@@ -1420,7 +1259,7 @@
     }
   }
 
-  function renderLeaderboard(members, lastWeek) {
+  function renderLeaderboard(members, lastWeek, weekStartISO) {
     const sorted = [...members].sort((a, b) => b.score - a.score);
     const top    = Math.max(sorted[0].score, 1);
     const container = document.getElementById('lb-rows');
@@ -1471,7 +1310,7 @@
         </div>`;
     }).join('');
 
-    const fridayStart = new Date(getWeekStart());
+    const fridayStart = new Date(weekStartISO);
     const thursdayEnd = new Date(fridayStart);
     thursdayEnd.setDate(fridayStart.getDate() + 6);
     const fmt = d => `${FULL_MONTHS[d.getMonth()].slice(0,3)} ${d.getDate()}`;
@@ -1480,17 +1319,24 @@
   }
 
   // ── Boot ──
-  const cached = loadLeaderboardCache();
-  if (cached && cached.length) renderLeaderboard(cached, loadLastWeekCache());
+  // Render from local cache immediately (instant paint on load/reboot),
+  // then kick off a real fetch to refresh it.
+  const cachedPayload = loadLeaderboardCache();
+  if (cachedPayload && cachedPayload.totals) {
+    const members = Object.entries(cachedPayload.totals).map(([name, t]) => ({
+      name, ...MEMBER_META[name], score: t.score, tasks: t.tasks, ptsToday: t.ptsToday,
+    }));
+    renderLeaderboard(members, cachedPayload.lastWeek, cachedPayload.weekStart);
+  }
 
-  // Initial Airtable fetch
+  // Initial fetch from the proxy
   fetchLeaderboard();
 
   // Fast notify-poll — only hits the tiny Vercel endpoint, no Airtable cost
   checkForUpdates();
   setInterval(checkForUpdates, NOTIFY_POLL_MS);
 
-  // Slow safety poll — full Airtable fetch (catches anything the notify channel missed)
+  // Slow safety poll — asks the proxy to refresh (catches anything the notify channel missed)
   setInterval(fetchLeaderboard, SAFETY_POLL_MS);
 
   // When the tab becomes visible again, ask the (free) notify endpoint
