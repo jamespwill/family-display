@@ -447,6 +447,22 @@
   }
   .lb-stat b { color:rgba(255,255,255,.82); }
 
+  .lb-steps-row {
+    display:flex; align-items:center; gap:6px;
+    margin-top:8px; padding-top:8px;
+    border-top:1px solid rgba(255,255,255,.08);
+  }
+  .lb-steps-icon { font-size:12px; opacity:.6; }
+  .lb-steps-count { font-size:13px; font-weight:800; color:#fff; }
+  .lb-steps-label { font-size:10px; font-weight:700; color:rgba(255,255,255,.4); }
+  .lb-steps-asof {
+    font-size:9px; font-weight:700; color:rgba(255,255,255,.28);
+    margin-left:auto;
+  }
+  .lb-steps-row.leading .lb-steps-count { color:var(--accent-gold); }
+  .lb-steps-row.leading .lb-steps-icon  { opacity:1; }
+  .lb-steps-trophy { font-size:11px; margin-left:2px; }
+
   .lb-footer {
     margin-top:12px; padding-top:11px;
     border-top:1px solid rgba(255,255,255,.08);
@@ -1170,19 +1186,29 @@
   // URL of the PWA's notify endpoint. The Pi polls GET on this URL; the PWA POSTs to it.
   const NOTIFY_URL = 'https://family-dashboard-rho.vercel.app/api/notify';
 
+  // URL for the weekly step totals (private repo/API — see project notes).
+  const STEPS_API_URL = 'https://family-dashboard-rho.vercel.app/api/steps';
+
   // Timing config
   const NOTIFY_POLL_MS      = 5 * 1000;           // Check Upstash every 5 seconds for "anything new?"
   const SAFETY_POLL_MS      = 6 * 60 * 60 * 1000; // Refresh from the proxy every 6 hours (safety net).
                                                    // Cheap regardless of interval now — the proxy's own
                                                    // cache means this rarely triggers an Airtable call.
+  const STEPS_POLL_MS       = 30 * 60 * 1000;     // Steps only change 3x/day server-side, but poll a
+                                                   // bit more often so a fresh sync shows up without reload.
   const LB_CACHE_KEY        = 'lb_cache_v2';       // bumped: shape changed (server-computed totals)
   const LB_LAST_NOTIFY_KEY  = 'lb_last_notify_v1';
+  const STEPS_CACHE_KEY     = 'steps_cache_v1';
 
   const MEMBER_META = {
     'Ella':    { color: 'var(--ella)',    initial: 'E', photo: 'photos/ella.jpg',    streakIcon: '🔥' },
     'Lindsey': { color: 'var(--lindsey)', initial: 'L', photo: 'photos/lindsey.jpg', streakIcon: '⚡' },
     'James':   { color: 'var(--james)',   initial: 'J', photo: 'photos/james.jpg',   streakIcon: '📅' },
   };
+
+  // Populated by fetchSteps(); keyed by name, e.g. { James: {steps, asOf}, Lindsey: {...} }.
+  // Stays empty for anyone without a wearable (Ella) — renderLeaderboard skips those silently.
+  let latestStepsData = {};
 
   function saveLeaderboardCache(payload) {
     try {
@@ -1196,6 +1222,59 @@
       return raw ? JSON.parse(raw) : null;
     } catch(e) {
       return null;
+    }
+  }
+
+  function saveStepsCache(byName) {
+    try {
+      localStorage.setItem(STEPS_CACHE_KEY, JSON.stringify(byName));
+    } catch(e) {}
+  }
+
+  function loadStepsCache() {
+    try {
+      const raw = localStorage.getItem(STEPS_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch(e) {
+      return null;
+    }
+  }
+
+  // Formats an ISO timestamp as local "H:MM AM/PM", matching the clock/event styling.
+  function formatAsOf(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    let h = d.getHours(), m = d.getMinutes();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${String(m).padStart(2,'0')} ${ampm}`;
+  }
+
+  // Re-renders the leaderboard using whatever leaderboard data is cached, now that
+  // fresh step data is available. Steps and points refresh on independent schedules,
+  // so each fetch function re-renders using the OTHER's most recent cached value.
+  function rerenderWithCachedLeaderboard() {
+    const cached = loadLeaderboardCache();
+    if (!cached || !cached.totals) return;
+    const members = Object.entries(cached.totals).map(([name, t]) => ({
+      name, ...MEMBER_META[name], score: t.score, tasks: t.tasks, ptsToday: t.ptsToday,
+    }));
+    renderLeaderboard(members, cached.lastWeek, cached.weekStart);
+  }
+
+  // Fetches weekly step totals from the private steps API and re-renders.
+  async function fetchSteps() {
+    try {
+      const res = await fetch(STEPS_API_URL, { cache: 'no-store' });
+      if (!res.ok) { console.error(`[Steps] API returned ${res.status}`); return; }
+      const payload = await res.json();
+      const byName = {};
+      (payload.people || []).forEach(p => { byName[p.name] = { steps: p.steps, asOf: p.asOf }; });
+      latestStepsData = byName;
+      saveStepsCache(byName);
+      rerenderWithCachedLeaderboard();
+    } catch(e) {
+      console.error('[Steps] Fetch failed:', e);
     }
   }
 
@@ -1278,6 +1357,24 @@
         : `Last wk: <b>—</b>`;
       const crown = i === 0 ? `<div class="lb-crown"><span class="emoji">👑</span></div>` : '';
 
+      // Steps row: only rendered for people the steps API actually has data for
+      // (Ella has no wearable, so this silently stays empty for her).
+      let stepsRowHtml = '';
+      const stepsInfo = latestStepsData[m.name];
+      if (stepsInfo) {
+        const otherEntry = Object.entries(latestStepsData).find(([n]) => n !== m.name);
+        const otherSteps = otherEntry ? otherEntry[1].steps : null;
+        const isLeading  = otherSteps !== null && stepsInfo.steps > otherSteps;
+        stepsRowHtml = `
+          <div class="lb-steps-row ${isLeading ? 'leading' : ''}">
+            <span class="emoji lb-steps-icon">🏃</span>
+            <span class="lb-steps-count">${stepsInfo.steps.toLocaleString()}</span>
+            <span class="lb-steps-label">steps this week</span>
+            <span class="lb-steps-asof">as of ${formatAsOf(stepsInfo.asOf)}</span>
+            ${isLeading ? '<span class="emoji lb-steps-trophy">🏆</span>' : ''}
+          </div>`;
+      }
+
       return `
         <div class="lb-member ${rankClasses[i]}">
           <div class="lb-top">
@@ -1307,6 +1404,7 @@
             <div class="lb-stat"><b>+${m.ptsToday}</b> today</div>
             <div class="lb-stat">${lastWkPill}</div>
           </div>
+          ${stepsRowHtml}
         </div>`;
     }).join('');
 
@@ -1320,7 +1418,10 @@
 
   // ── Boot ──
   // Render from local cache immediately (instant paint on load/reboot),
-  // then kick off a real fetch to refresh it.
+  // then kick off real fetches to refresh both leaderboard and steps.
+  const cachedSteps = loadStepsCache();
+  if (cachedSteps) { latestStepsData = cachedSteps; }
+
   const cachedPayload = loadLeaderboardCache();
   if (cachedPayload && cachedPayload.totals) {
     const members = Object.entries(cachedPayload.totals).map(([name, t]) => ({
@@ -1329,8 +1430,9 @@
     renderLeaderboard(members, cachedPayload.lastWeek, cachedPayload.weekStart);
   }
 
-  // Initial fetch from the proxy
+  // Initial fetches from the proxies
   fetchLeaderboard();
+  fetchSteps();
 
   // Fast notify-poll — only hits the tiny Vercel endpoint, no Airtable cost
   checkForUpdates();
@@ -1338,6 +1440,10 @@
 
   // Slow safety poll — asks the proxy to refresh (catches anything the notify channel missed)
   setInterval(fetchLeaderboard, SAFETY_POLL_MS);
+
+  // Steps poll — independent schedule, since the underlying data only changes
+  // three times a day server-side.
+  setInterval(fetchSteps, STEPS_POLL_MS);
 
   // When the tab becomes visible again, ask the (free) notify endpoint
   // whether anything changed — it triggers a full Airtable fetch only if so.
